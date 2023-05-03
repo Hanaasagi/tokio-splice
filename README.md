@@ -3,6 +3,10 @@
 Implemented splice(2) based bidirectional data transmission in tokio-rs.
 Just like [`tokio::io::copy_bidirectional`](https://docs.rs/tokio/latest/tokio/io/fn.copy_bidirectional.html).
 
+## API
+
+[API Doc](https://docs.rs/tokio-splice)
+
 ## Example
 
 The following code implements a TCP proxy that forwards traffic on port 8989 to example.com.
@@ -267,7 +271,6 @@ async fn main() -> Result<()> {
      vus_max........................: 10    min=10      max=10
 
 ```
-
 
 <details>
     <summary>Full process statistics with <code>pidstat -r -w -u -d -p</code></summary>
