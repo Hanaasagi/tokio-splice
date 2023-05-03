@@ -351,7 +351,6 @@ where
 mod tests {}
 
 use tokio::net::{TcpStream, UnixStream};
-#[macro_export]
 macro_rules! impl_stream_for {
     ($stream: ident) => {
         impl Stream for $stream {
