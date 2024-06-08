@@ -149,7 +149,7 @@ where
             ready!(stream.poll_read_ready_n(cx))?;
 
             let res = stream.try_io_n(Interest::READABLE, || {
-                match splice(stream.as_raw_fd(), self.buf.write_fd(), 65536) {
+                match splice(stream.as_raw_fd(), self.buf.write_fd(), isize::MAX as usize) {
                     size if size >= 0 => Ok(size as usize),
                     _ => {
                         let err = Error::last_os_error();
