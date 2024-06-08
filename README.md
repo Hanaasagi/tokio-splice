@@ -50,6 +50,11 @@ async fn main() -> Result<()> {
 }
 ```
 
+## Changelog
+
+- 0.2.1:
+  - Fix the maximum value of the `size_t` type. Closes: https://github.com/Hanaasagi/tokio-splice/issues/2
+
 ## Benchmark
 
 10 VUs, 10 seconds, work as a http proxy to download 100Mb file.
@@ -446,3 +451,4 @@ async fn main() -> Result<()> {
     11:49:35 PM  1000     59138      4.44      2.49  proxy
 
 </detail>
+
