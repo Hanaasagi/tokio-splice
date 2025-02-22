@@ -13,7 +13,7 @@ splice(2) in tokio
 
 [dependencies]
 libc = "0.2.169"
-tokio = { version = "1.43.0", features = ["net"] }
+tokio = { version = "1.43.0", features = ["net", "time"] }
 
 [dev-dependencies]
 tokio = { version = "1.43.0", features = ["net", "macros", "rt", "signal", "io-util", "time"] }

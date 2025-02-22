@@ -7,6 +7,7 @@ use std::task::{ready, Context, Poll};
 
 use libc;
 use tokio::io::{AsyncRead, AsyncWrite, Interest};
+use tokio::time::{interval, Duration};
 
 /// the size of PIPE_BUF
 const PIPE_SIZE: usize = 65536;
@@ -144,7 +145,7 @@ where
         }
     }
 
-    fn poll_fill_buf(&mut self, cx: &mut Context<'_>, stream: &mut R) -> Poll<Result<usize>> {
+    fn poll_fill_buf(&mut self, cx: &mut Context<'_>, stream: Pin<&mut R>) -> Poll<Result<usize>> {
         loop {
             ready!(stream.poll_read_ready_n(cx))?;
 
@@ -173,8 +174,8 @@ where
                 }
                 Err(e) => {
                     if e.kind() == ErrorKind::WouldBlock {
-                        continue;
-                        // return Poll::Pending;
+                        return Poll::Pending;
+                        // continue;
                     }
 
                     return Poll::Ready(Err(e));
@@ -183,7 +184,7 @@ where
         }
     }
 
-    fn poll_write_buf(&mut self, cx: &mut Context<'_>, stream: &mut W) -> Poll<Result<usize>> {
+    fn poll_write_buf(&mut self, cx: &mut Context<'_>, stream: Pin<&mut W>) -> Poll<Result<usize>> {
         loop {
             ready!(stream.poll_write_ready_n(cx)?);
 
@@ -206,7 +207,8 @@ where
                 Ok(_) => return Poll::Ready(res),
                 Err(e) => {
                     if e.kind() == ErrorKind::WouldBlock {
-                        continue;
+                        return Poll::Pending;
+                        // continue;
                     }
 
                     return Poll::Ready(Err(e));
@@ -215,8 +217,8 @@ where
         }
     }
 
-    fn poll_flush_buf(&mut self, cx: &mut Context<'_>, stream: &mut W) -> Poll<Result<()>> {
-        Pin::new(stream).poll_flush(cx)
+    fn poll_flush_buf(&mut self, cx: &mut Context<'_>, stream: Pin<&mut W>) -> Poll<Result<()>> {
+        stream.poll_flush(cx)
     }
 }
 
@@ -225,7 +227,12 @@ where
     R: Stream + Unpin,
     W: Stream + Unpin,
 {
-    fn poll_copy(&mut self, cx: &mut Context<'_>, r: &mut R, w: &mut W) -> Poll<Result<u64>> {
+    fn poll_copy(
+        &mut self,
+        cx: &mut Context<'_>,
+        mut r: Pin<&mut R>,
+        mut w: Pin<&mut W>,
+    ) -> Poll<Result<u64>> {
         loop {
             // If our buffer is empty, then we need to read some data to
             // continue.
@@ -233,24 +240,27 @@ where
                 self.pos = 0;
                 self.cap = 0;
 
-                match self.poll_fill_buf(cx, r) {
+                match self.poll_fill_buf(cx, r.as_mut()) {
                     Poll::Ready(Ok(_)) => (),
                     Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
                     Poll::Pending => {
+                        // if self.pos == self.cap {
                         // Try flushing when the reader has no progress to avoid deadlock
                         // when the reader depends on buffered writer.
                         if self.need_flush {
-                            ready!(self.poll_flush_buf(cx, w))?;
+                            ready!(self.poll_flush_buf(cx, w.as_mut()))?;
+                            // ready!(w.as_mut().poll_flush(cx))?;
                             self.need_flush = false;
                         }
 
                         return Poll::Pending;
+                        // }
                     }
                 };
             }
 
             while self.pos < self.cap {
-                let size = ready!(self.poll_write_buf(cx, w))?;
+                let size = ready!(self.poll_write_buf(cx, w.as_mut()))?;
 
                 if size == 0 {
                     return Poll::Ready(Err(Error::new(
@@ -298,15 +308,17 @@ where
     SL: Stream + Unpin,
     SR: Stream + Unpin,
 {
+    let mut r = Pin::new(r);
+    let mut w = Pin::new(w);
+
     loop {
         match state {
             TransferState::Running(buf) => {
-                let count = ready!(buf.poll_copy(cx, r, w))?;
-
+                let count = ready!(buf.poll_copy(cx, r.as_mut(), w.as_mut()))?;
                 *state = TransferState::ShuttingDown(count);
             }
             TransferState::ShuttingDown(count) => {
-                ready!(Pin::new(&mut *w).poll_shutdown(cx))?;
+                ready!(w.as_mut().poll_shutdown(cx))?;
 
                 *state = TransferState::Done(*count);
             }
@@ -336,9 +348,14 @@ where
     let mut a_to_b = TransferState::Running(CopyBuffer::new(Pipe::new()?));
     let mut b_to_a = TransferState::Running(CopyBuffer::new(Pipe::new()?));
 
+    let mut interval = interval(Duration::from_millis(50));
     poll_fn(|cx| {
+        let _ = interval.poll_tick(cx);
         let a_to_b = transfer_one_direction(cx, &mut a_to_b, a, b)?;
         let b_to_a = transfer_one_direction(cx, &mut b_to_a, b, a)?;
+        if a_to_b == Poll::Pending || b_to_a == Poll::Pending {
+            interval.reset();
+        }
 
         let a_to_b = ready!(a_to_b);
         let b_to_a = ready!(b_to_a);
