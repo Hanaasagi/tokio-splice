@@ -1,5 +1,9 @@
 # tokio-splice
 
+## IMPORTANT: This repository is no longer maintained. For an alternative, please use https://github.com/hanyu-dev/tokio-splice2.
+
+---
+
 Implemented splice(2) based bidirectional data transmission in tokio-rs.
 Just like [`tokio::io::copy_bidirectional`](https://docs.rs/tokio/latest/tokio/io/fn.copy_bidirectional.html).
 
