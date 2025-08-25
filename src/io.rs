@@ -6,6 +6,7 @@ use std::pin::Pin;
 use std::task::{ready, Context, Poll};
 
 use libc;
+use tokio::io::unix::AsyncFd;
 use tokio::io::{AsyncRead, AsyncWrite, Interest};
 
 /// the size of PIPE_BUF
@@ -56,7 +57,7 @@ fn splice(fd_in: RawFd, fd_out: RawFd, size: usize) -> isize {
 
 /// Linux Pipe
 #[repr(C)]
-struct Pipe(RawFd, RawFd);
+struct Pipe(AsyncFd<RawFd>, AsyncFd<RawFd>);
 
 impl Pipe {
     /// Create a pipe
@@ -90,26 +91,38 @@ impl Pipe {
             }
             let [r_fd, w_fd] = pipe.assume_init();
             libc::fcntl(w_fd, libc::F_SETPIPE_SZ, PIPE_SIZE);
-            Ok(Pipe(r_fd, w_fd))
+
+            let r_fd_async = AsyncFd::with_interest(r_fd, Interest::READABLE)?;
+            let w_fd_async = AsyncFd::with_interest(w_fd, Interest::WRITABLE)?;
+            Ok(Pipe(r_fd_async, w_fd_async)) // AsyncFd::new(r_fd, w_fd))
         }
     }
 
     #[inline]
     fn read_fd(&self) -> RawFd {
-        self.0
+        self.0.as_raw_fd()
     }
 
     #[inline]
     fn write_fd(&self) -> RawFd {
-        self.1
+        self.1.as_raw_fd()
+    }
+
+    #[inline]
+    fn read_fd_async(&self) -> &AsyncFd<i32> {
+        &self.0
+    }
+    #[inline]
+    fn write_fd_async(&self) -> &AsyncFd<i32> {
+        &self.1
     }
 }
 
 impl Drop for Pipe {
     fn drop(&mut self) {
         unsafe {
-            libc::close(self.0);
-            libc::close(self.1);
+            libc::close(self.0.as_raw_fd());
+            libc::close(self.1.as_raw_fd());
         }
     }
 }
@@ -147,6 +160,7 @@ where
     fn poll_fill_buf(&mut self, cx: &mut Context<'_>, stream: &mut R) -> Poll<Result<usize>> {
         loop {
             ready!(stream.poll_read_ready_n(cx))?;
+            let mut gw = ready!(self.buf.write_fd_async().poll_write_ready(cx))?;
 
             let res = stream.try_io_n(Interest::READABLE, || {
                 match splice(stream.as_raw_fd(), self.buf.write_fd(), isize::MAX as usize) {
@@ -173,6 +187,7 @@ where
                 }
                 Err(e) => {
                     if e.kind() == ErrorKind::WouldBlock {
+                        gw.clear_ready();
                         continue;
                         // return Poll::Pending;
                     }
@@ -186,6 +201,7 @@ where
     fn poll_write_buf(&mut self, cx: &mut Context<'_>, stream: &mut W) -> Poll<Result<usize>> {
         loop {
             ready!(stream.poll_write_ready_n(cx)?);
+            let mut gr = ready!(self.buf.read_fd_async().poll_read_ready(cx))?;
 
             let res = stream.try_io_n(Interest::WRITABLE, || {
                 match splice(self.buf.read_fd(), stream.as_raw_fd(), self.cap - self.pos) {
@@ -206,6 +222,7 @@ where
                 Ok(_) => return Poll::Ready(res),
                 Err(e) => {
                     if e.kind() == ErrorKind::WouldBlock {
+                        gr.clear_ready();
                         continue;
                     }
 
